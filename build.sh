@@ -5,7 +5,7 @@ set -e
 compiler=g++
 executable="wika"
 
-compiler_flags="-O2 -std=c++20 -fPIC -Wall -Wextra"
+compiler_flags="-O2 -fPIC -Wall -Wextra"
 linker_flags="-pthread -ldl -lm"
 if [ "$1" == "release" ]
 then
@@ -23,4 +23,4 @@ code_path="$working_path/code"
 [ -d $data_path ] || mkdir -p $data_path
 
 # build the executable
-$compiler $compiler_flags $code_path/wika.cpp -o $build_path/$executable $linker_flags
+$compiler $compiler_flags $code_path/$executable.cpp -o $build_path/$executable $linker_flags
