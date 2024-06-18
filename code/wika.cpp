@@ -162,7 +162,7 @@ void deallocate_virtual_memory(void *address, size_t size)
 	(void)::munmap(address, size);
 }
 
-struct Virtual_Memory_Allocator
+struct VirtualMemoryAllocator
 {
 	static void *allocate(void *pointer, size_t size)
 	{
@@ -193,12 +193,13 @@ size_t get_memory_page_size()
 	return getpagesize();
 }
 
-struct ArenaBuffer : Doubly<Buffer<Virtual_Memory_Allocator>>
+template<VariableAllocator Allocator>
+struct ChunkedBufferChunk : Doubly<Buffer<Allocator>>
 {
 	void *operator new(size_t size, size_t minimum_size)
 	{
 		size = align(size + minimum_size, get_memory_page_size());
-		ArenaBuffer *pointer = (ArenaBuffer *)allocate_virtual_memory(0, size);
+		ChunkedBufferChunk *pointer = (ChunkedBufferChunk *)allocate_virtual_memory(0, size);
 		pointer->pointer = (uint8_t *)pointer;
 		pointer->size = size;
 		pointer->mass = 0;
@@ -209,20 +210,25 @@ struct ArenaBuffer : Doubly<Buffer<Virtual_Memory_Allocator>>
 
 	void operator delete(void *p)
 	{
-		ArenaBuffer *pointer = (ArenaBuffer *)p;
+		ChunkedBufferChunk *pointer = (ChunkedBufferChunk *)p;
 		deallocate_virtual_memory(pointer, pointer->size);
 	}
 };
 
-struct ArenaFlag
+template<VariableAllocator Allocator>
+struct ChunkedBufferFlag
 {
-	ArenaBuffer *buffer;
+	ChunkedBufferChunk<Allocator> *buffer;
 	size_t offset;
 };
 
-struct Arena : ArenaBuffer
+template<VariableAllocator Allocator>
+struct ChunkedBuffer : ChunkedBufferChunk<Allocator>
 {
-	ArenaBuffer *last;
+	using Chunk = ChunkedBufferChunk<Allocator>;
+	using Flag = ChunkedBufferFlag<Allocator>;
+
+	Chunk *last;
 
 	template<typename T>
 	T *allocate(size_t count = 1, size_t alignment = DEFAULT_ALIGNMENT)
@@ -233,7 +239,7 @@ struct Arena : ArenaBuffer
 		size_t additional_mass = alignment_addition + size;
 		if (space < additional_mass)
 		{
-			ArenaBuffer *new_arena = new(additional_mass) ArenaBuffer;
+			Chunk *new_arena = new(additional_mass) Chunk;
 			this->last->attach(new_arena);
 			this->last = new_arena;
 		}
@@ -250,19 +256,21 @@ struct Arena : ArenaBuffer
 		this->last->subtract(size);
 		if (!this->last->mass && this->last->prior)
 		{
-			ArenaBuffer *new_last = static_cast<ArenaBuffer *>(this->last->prior);
+			Chunk *new_last = static_cast<Chunk *>(this->last->prior);
 			this->last->detach();
 			this->last = new_last;
 		}
 	}
 
 	// this assumes that `flag.buffer` is within the arena
-	void set(ArenaFlag flag)
+	void set(Flag flag)
 	{
 		this->last = flag.buffer;
 		this->last->mass = flag.offset;
 	}
 };
+
+using Arena = ChunkedBuffer<VirtualMemoryAllocator>;
 
 struct Source
 {
@@ -274,8 +282,8 @@ struct Source
 };
 
 Arena sources;
-Arena sources_path;
-Arena sources_data;
+Arena source_paths;
+Arena source_datas;
 
 int main(int arguments_count, char **arguments)
 {
@@ -284,12 +292,12 @@ int main(int arguments_count, char **arguments)
 	{
 		set_termination_on_error(true);
 		size_t path_size = get_string_length(source_path);
-		char *path = sources_path.reserve<char>(path_size + 1);
+		char *path = source_paths.reserve<char>(path_size + 1);
 		copy_memory(path, source_path, path_size);
 		path[path_size] = 0;
 		Handle handle = open_file(path);
 		ssize_t data_size = get_file_size(handle);
-		uint8_t *data = sources_data.reserve<uint8_t>(data_size + 1);
+		uint8_t *data = source_datas.reserve<uint8_t>(data_size + 1);
 		ssize_t read_size = read_file(data, data_size, handle);
 		if (read_size != data_size)
 		{
