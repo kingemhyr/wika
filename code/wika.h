@@ -1,5 +1,7 @@
 #pragma once
 
+#define ENABLE_DEBUGGING
+
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -149,28 +151,28 @@ struct Array
 
 };
 
-void initialize_array(Array *array, Size size, Reallocator *reallocator);
+void initialize_array(Array *array, Size size, Reallocator *reallocator = reallocate);
 
-void uninitialize_array(Array *array, Reallocator *reallocator);
+void uninitialize_array(Array *array, Reallocator *reallocator = reallocate);
 
-void resize_array(Array *array, Size new_size, Reallocator *reallocator);
+void resize_array(Array *array, Size new_size, Reallocator *reallocator = reallocate);
 
 struct Buffer : Array
 {
 	Size mass;
 };
 
-void initialize_buffer(Buffer *buffer, Size size, Reallocator *reallocator);
+void initialize_buffer(Buffer *buffer, Size size, Reallocator *reallocator = reallocate);
 
-void uninitialize_buffer(Buffer *buffer, Reallocator *reallocator);
+void uninitialize_buffer(Buffer *buffer, Reallocator *reallocator = reallocate);
 
-void transform_buffer_into_array(Buffer *buffer, Array *array, Reallocator *reallocator);
+void transform_buffer_into_array(Buffer *buffer, Array *array, Reallocator *reallocator = reallocate);
 
-void expand_buffer(Buffer *buffer, Size size, Reallocator *reallocator);
+void expand_buffer(Buffer *buffer, Size size, Reallocator *reallocator = reallocate);
 
-void *ensure_buffer(Buffer *buffer, Size size, Reallocator *reallocator);
+void *ensure_buffer(Buffer *buffer, Size size, Reallocator *reallocator = reallocate);
 
-void *reserve_from_buffer(Buffer *buffer, Size size, Reallocator *reallocator);
+void *reserve_from_buffer(Buffer *buffer, Size size, Reallocator *reallocator = reallocate);
 
 void release_from_buffer(Buffer *buffer, Size size);
 

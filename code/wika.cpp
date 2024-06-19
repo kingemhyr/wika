@@ -16,7 +16,6 @@ void terminate(void);
 
 struct
 {
-	bool print_tokens;
 }
 compilation_options;
 
@@ -37,7 +36,7 @@ int main(int arguments_count, char **arguments)
 
 	static Size sources_count = 0;
 	static Buffer source_paths;
-	initialize_buffer(&source_paths, sizeof(char *), reallocate);
+	initialize_buffer(&source_paths, sizeof(char *));
 
 	// parse commandline
 	{
@@ -51,8 +50,6 @@ int main(int arguments_count, char **arguments)
 				if (argument[1] == '-')
 				{
 					const char *option = &argument[2];
-					if (compare_string(option, "print_tokens") == 0)
-						compilation_options.print_tokens = true;
 				}
 				else
 				{
@@ -74,7 +71,7 @@ int main(int arguments_count, char **arguments)
 				if (already_exists)
 					continue;
 
-				char **reservation = (char **)reserve_from_buffer(&source_paths, sizeof(char *), reallocate);
+				char **reservation = (char **)reserve_from_buffer(&source_paths, sizeof(char *));
 				*reservation = argument;
 				++sources_count;
 			}
@@ -83,8 +80,8 @@ int main(int arguments_count, char **arguments)
 
 	// load the sources
 	static Buffer sources, source_datas;
-	initialize_buffer(&sources, sizeof(Source) * sources_count, reallocate);
-	initialize_buffer(&source_datas, sources_count * get_memory_page_size(), reallocate);
+	initialize_buffer(&sources, sizeof(Source) * sources_count);
+	initialize_buffer(&source_datas, sources_count * get_memory_page_size());
 	{
 		// load sources
 		for (Size i = 0; i < sources_count; ++i)
@@ -106,7 +103,7 @@ int main(int arguments_count, char **arguments)
 				continue;
 			}
 
-			U8 *data_pointer = (U8 *)reserve_from_buffer(&source_datas, file_size + 1 /* null-terminator */, reallocate);
+			U8 *data_pointer = (U8 *)reserve_from_buffer(&source_datas, file_size + 1 /* null-terminator */);
 			Size read_size = file_size;
 			if (!read_file(file_handle, data_pointer, &read_size))
 			{
@@ -139,7 +136,7 @@ int main(int arguments_count, char **arguments)
 	{
 		Source *source = &((Source *)sources.pointer)[i];
 
-		report_debug("compiling %s:\n%s\n", source->path, source->pointer);
+		print("compiling %s...\n", source->path);
 
 		Parser parser;
 		initialize_parser(&parser, source);
@@ -160,7 +157,7 @@ Size format_token(char *buffer, Size size, const Token *token)
 	char strbuf[16];
 	set_memory(strbuf, sizeof(strbuf), 0);
 
-	const char *fmt = "{ type = %i; position = %lu; size = %lu; representation = \"%s\" }";
+	const char *fmt = "type = %i, position = %lu, size = %lu, representation = \"%s\"";
 	char *representation = strbuf;
 
 	switch (token->type)
@@ -234,7 +231,7 @@ static Token_Type lex(Parser *parser)
 	case Token_Type_RIGHT_BRACE:
 		token->type = (Token_Type)codepoint;
 		token->size = 1;
-		advance(parser, &codepoint);
+		//advance(parser, &codepoint);
 		break;
 	default:
 		if (check_letter(codepoint) || codepoint == '_')
@@ -249,7 +246,7 @@ static Token_Type lex(Parser *parser)
 			while (check_letter(codepoint) || codepoint == '_');
 			token->size -= increment;
 
-			token->representation = (char *)reserve_from_buffer(&parser->identifiers, token->size + 1, reallocate);
+			token->representation = (char *)reserve_from_buffer(&parser->identifiers, token->size + 1);
 			token->representation[token->size] = 0;
 			copy_memory(token->representation, &source->pointer[token->position], token->size);
 
@@ -270,15 +267,17 @@ static Token_Type lex(Parser *parser)
 	}
 
 	// print the token
-	if (compilation_options.print_tokens)
+#if defined ENABLE_DEBUGGING
 	{
 		Size size = format_token(0, 0, token);
 		Array string;
-		initialize_array(&string, size + 1, reallocate);
+		initialize_array(&string, size + 1);
 		string.pointer[size] = 0;
-		format_token((char *)string.pointer, size, token);
-		print("Token %s\n", string.pointer);
+		format_token((char *)string.pointer, size + 1, token);
+		report_debug("token: %s", string.pointer);
+		uninitialize_array(&string);
 	}
+#endif
 
 	return token->type;
 }
@@ -293,8 +292,11 @@ Size parse(Parser *parser)
 		if (type == Token_Type_NONE)
 			break;
 	}
+
+	if (errors_count)
+		return errors_count;
 	
-	return errors_count;
+	return 0;
 }
 
 Size get_alignment_addition(Address address, Size alignment)
@@ -330,6 +332,16 @@ void report_error(const char *message, ...)
 void report_debug(const char *message, ...)
 {
 	fprintf(stderr, "debug: ");
+	va_list args;
+	va_start(args, message);
+	vfprintf(stderr, message, args);
+	va_end(args);
+	fprintf(stderr, "\n");
+}
+
+void report_info(const char *message, ...)
+{
+	fprintf(stderr, "info: ");
 	va_list args;
 	va_start(args, message);
 	vfprintf(stderr, message, args);
