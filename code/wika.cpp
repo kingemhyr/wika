@@ -123,10 +123,10 @@ int main(int arguments_count, char **arguments)
 			data_pointer[read_size] = 0; // null-terminator
 			
 			Source *source = (Source *)reserve_from_buffer(&sources, sizeof(Source), 0);
-			source->file_path = file_path;
-			source->file_handle = file_handle;
-			source->file_size = file_size;
-			source->data_pointer = data_pointer;
+			source->path = file_path;
+			source->handle = file_handle;
+			source->size = file_size;
+			source->pointer = data_pointer;
 		}
 	}
 
@@ -139,17 +139,14 @@ int main(int arguments_count, char **arguments)
 	{
 		Source *source = &((Source *)sources.pointer)[i];
 
-		report_debug("compiling %s:\n%s\n", source->file_path, source->data_pointer);
+		report_debug("compiling %s:\n%s\n", source->path, source->pointer);
 
 		Parser parser;
 		initialize_parser(&parser, source);
 
-		Array tokens;
-		Size error_count = lex(&parser, &tokens);
-		for (Size i = 0; i < tokens.size; ++i)
+		Size errors_count = parse(&parser);
+		if (errors_count)
 		{
-			Token *token = &((Token *)tokens.pointer)[i];
-			print("Token { type = %i; position = %lu; size = %lu }\n", token->type, token->position, token->size);
 		}
 	}
 
@@ -158,16 +155,145 @@ finish:
 	return exit_code;
 }
 
+Size format_token(char *buffer, Size size, const Token *token)
+{
+	char strbuf[16];
+	set_memory(strbuf, sizeof(strbuf), 0);
+
+	const char *fmt = "{ type = %i; position = %lu; size = %lu; representation = \"%s\" }";
+	char *representation = strbuf;
+
+	switch (token->type)
+	{
+	case Token_Type_NONE:
+		copy_string(strbuf, "");
+		break;
+	case Token_Type_IDENTIFIER:
+		representation = token->representation;
+		break;
+	case Token_Type_PROC:
+		copy_string(strbuf, "proc");
+		break;
+	default:
+		strbuf[0] = token->type;
+		break;
+	}
+	return format(buffer, size, fmt, token->type, token->position, token->size, representation);
+}
+
 void initialize_parser(Parser *parser, const Source *source)
 {
 	set_memory(parser, sizeof(Parser), 0);
 	parser->source = source;
 }
 
-Size lex(Parser *parser, Array *tokens)
+static Size advance(Parser *parser, U32 *codepoint)
+{
+	U8 *pointer = &parser->source->pointer[parser->position];
+	Size size = decode_utf8(codepoint, pointer);
+	if (!size)
+	{
+		report_error("Erroneous UTF-8 encoding");
+		return 0;
+	}
+	parser->position += size;
+	return size;
+
+}
+
+static bool check_whitespace(U32 codepoint)
+{
+	return iswspace(codepoint);
+}
+
+static bool check_letter(U32 codepoint)
+{
+	return iswalpha(codepoint);
+}
+
+static Token_Type lex(Parser *parser)
+{
+	Token *token = &parser->token;
+	const Source *source = parser->source;
+	U32 codepoint;
+	Size increment;
+
+	// skip whitespace
+	do
+		increment = advance(parser, &codepoint);
+	while (check_whitespace(codepoint));
+
+	token->position = parser->position - increment;
+	switch (codepoint)
+	{
+	case Token_Type_COLON:
+	case Token_Type_SEMICOLON:
+	case Token_Type_LEFT_PARENTHESIS:
+	case Token_Type_RIGHT_PARENTHESIS:
+	case Token_Type_LEFT_BRACE:
+	case Token_Type_RIGHT_BRACE:
+		token->type = (Token_Type)codepoint;
+		token->size = 1;
+		advance(parser, &codepoint);
+		break;
+	default:
+		if (check_letter(codepoint) || codepoint == '_')
+		{
+			token->size = increment;
+			do
+			{
+				token->size += advance(parser, &codepoint);
+				if (!codepoint)
+					break;
+			}
+			while (check_letter(codepoint) || codepoint == '_');
+			token->size -= increment;
+
+			token->representation = (char *)reserve_from_buffer(&parser->identifiers, token->size + 1, reallocate);
+			token->representation[token->size] = 0;
+			copy_memory(token->representation, &source->pointer[token->position], token->size);
+
+			if (compare_string(token->representation, "proc") == 0)
+				token->type = Token_Type_PROC;
+			else
+				token->type = Token_Type_IDENTIFIER;
+
+			if (token->type != Token_Type_IDENTIFIER)
+				release_from_buffer(&parser->identifiers, token->size + 1);
+		}
+		else
+		{
+			token->type = Token_Type_NONE;
+			token->size = 0;
+		}
+		break;
+	}
+
+	// print the token
+	if (compilation_options.print_tokens)
+	{
+		Size size = format_token(0, 0, token);
+		Array string;
+		initialize_array(&string, size + 1, reallocate);
+		string.pointer[size] = 0;
+		format_token((char *)string.pointer, size, token);
+		print("Token %s\n", string.pointer);
+	}
+
+	return token->type;
+}
+
+Size parse(Parser *parser)
 {
 	Size errors_count = 0;
-	set_memory(tokens, sizeof(Array), 0);
+
+	for (;;)
+	{
+		Token_Type type = lex(parser);
+		if (type == Token_Type_NONE)
+			break;
+	}
+	
 	return errors_count;
 }
 
@@ -341,6 +467,75 @@ void *reserve_from_buffer(Buffer *buffer, Size size, Reallocator *reallocator)
 	void *end = ensure_buffer(buffer, size, reallocator);
 	buffer->mass += size;
 	return end;
+}
+
+void release_from_buffer(Buffer *buffer, Size size)
+{
+	assert(buffer->mass >= size);
+	buffer->mass -= size;
+}
+
+constexpr U8 utf8_class_table[32] =
+{
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	2, 2, 2, 2,
+	3, 3,
+	4,
+	5,
+};
+
+Size decode_utf8(U32 *codepoint, const U8 *string)
+{
+	Size byte_class = utf8_class_table[string[0] >> 3];
+	switch (byte_class)
+	{
+	case 1:
+		*codepoint = string[0];
+		break;
+	case 2:
+		if (!utf8_class_table[string[1] >> 3])
+		{
+			*codepoint  = (string[0] & LMASK5) << 6 |
+			              (string[1] & LMASK6) << 0;
+		}
+		break;
+	case 3:
+		if (!utf8_class_table[string[1] >> 3] &&
+		    !utf8_class_table[string[2] >> 3])
+		{
+			*codepoint = (string[0] & LMASK4) << 12 |
+			             (string[1] & LMASK6) << 6 |
+			             (string[2] & LMASK6) << 0;
+		}
+		break;
+	case 4:
+		if (!utf8_class_table[string[1] >> 3] &&
+		    !utf8_class_table[string[2] >> 3] &&
+		    !utf8_class_table[string[3] >> 3])
+		{
+			*codepoint = (string[0] & LMASK3) << 18 |
+			             (string[1] & LMASK6) << 12 |
+			             (string[2] & LMASK6) << 6 |
+			             (string[3] & LMASK6) << 0;
+		}
+		break;
+	default:
+		byte_class = 0;
+		break;
+	}
+	return byte_class;
+}
+
+Size get_utf8_size(U32 codepoint)
+{
+	Size size =
+		codepoint <= 0x7f     ? 1 :
+        codepoint <= 0x7ff    ? 2 :
+    	codepoint <= 0xffff   ? 3 :
+    	codepoint <= 0x10ffff ? 4 :
+		0;
+	return size;
 }
 
 // end of file stuff
