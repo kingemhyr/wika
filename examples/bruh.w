@@ -11,7 +11,6 @@ foo := 0;     // inferred typed
 // constants
 FOO :: S32;   // default-initialized as `0`
 FOO: S32 = 0; // initialized as `0`
-FOO := 0      // inferred typed
 
 // procedures
 do_foo :: proc;                                       // empty
