@@ -1,0 +1,28 @@
+# Syntax
+
+declaration
+	: identifier ':' [path] ('=' | ':') initializer
+	;
+
+path
+	: path {'.' (identifier | backwards-scope-resolution)}
+	| implicit-scope-resolution
+	| backwards-scope-resolution
+	;
+
+implicit-scope-resolution
+	: '.' path
+	;
+
+backwards-scope-resolution
+	: '.' <'.'> path
+	;
+
+initializer
+	: procedure
+	| structure
+	| enumeration
+	| union
+	| scope
+	| expression
+	;
