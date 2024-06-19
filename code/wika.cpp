@@ -29,13 +29,13 @@ int main(int arguments_count, char **arguments)
 
 	if (arguments_count <= 1)
 	{
-          report_error("no source paths");
+          err("no source paths");
           display_help();
           return 0;
 	}
 
 	static Size sources_count = 0;
-	static Buffer source_paths;
+	static Buffer source_paths; // (char)
 	initialize_buffer(&source_paths, sizeof(char *));
 
 	// parse commandline
@@ -58,21 +58,36 @@ int main(int arguments_count, char **arguments)
 			}
 			else
 			{
-				// the argument is an source path
+				// the argument is a source path
+
+				// get the full path
+				char pathbuf[MAX_FILE_PATH_SIZE + 1];
+				Size pathbufmass = get_full_file_path(argument, pathbuf);
+				if (!pathbufmass)
+				{
+					err("Failed to get the full file path of source file: %s", pathbuf);
+					continue;
+				}
+				pathbuf[pathbufmass] = 0;
 
 				// firstly, skip if the path already exists
 				bool already_exists = 0;
+				char *iterator = (char *)source_paths.pointer;
 				for (Size i = 0; i < sources_count; ++i)
 				{
-					char *path = ((char **)source_paths.pointer)[i];
-					if (compare_string(path, argument) == 0)
+					Size pathsz = get_length_of_string(iterator);
+					if (compare_memory(iterator, pathbuf, min(pathbufmass, pathsz)) == 0)
 						already_exists = 1;
+					iterator += pathsz + 1 /* null-terminator */;
 				}
 				if (already_exists)
+				{
+					warn("Source path is already given: %s", pathbuf);
 					continue;
+				}
 
-				char **reservation = (char **)reserve_from_buffer(&source_paths, sizeof(char *));
-				*reservation = argument;
+				char *reservation = (char *)reserve_from_buffer(&source_paths, pathbufmass + 1);
+				copy_memory(reservation, pathbuf, pathbufmass);
 				++sources_count;
 			}
 		}
@@ -83,15 +98,14 @@ int main(int arguments_count, char **arguments)
 	initialize_buffer(&sources, sizeof(Source) * sources_count);
 	initialize_buffer(&source_datas, sources_count * get_memory_page_size());
 	{
-		// load sources
-		for (Size i = 0; i < sources_count; ++i)
+		const char *file_path = (char *)source_paths.pointer;
+		for (Size i = 0; i < sources_count; ++i, file_path += (get_length_of_string(file_path)) + 1)
 		{
-			const char *file_path = ((char **)source_paths.pointer)[i];
 		
 			Handle file_handle;
 			if (!open_file(&file_handle, file_path, false))
 			{
-				report_error("Failed to open source file: %s", file_path);
+				err("Failed to open source file: %s", file_path);
 				continue;
 			}
 
@@ -99,7 +113,7 @@ int main(int arguments_count, char **arguments)
 			if (!get_file_size(file_handle, &file_size))
 			{
 				close_file(file_handle);
-				report_error("Failed to get source file size: %s", file_path);
+				err("Failed to get source file size: %s", file_path);
 				continue;
 			}
 
@@ -108,13 +122,13 @@ int main(int arguments_count, char **arguments)
 			if (!read_file(file_handle, data_pointer, &read_size))
 			{
 				close_file(file_handle);
-				report_error("Failed to read source file: %s", file_path);
+				err("Failed to read source file: %s", file_path);
 				continue;
 			}
 			if (read_size != file_size)
 			{
 				close_file(file_handle);
-				report_error("Failed to read entire file: %s", file_path);
+				err("Failed to read entire file: %s", file_path);
 				continue;
 			}
 			data_pointer[read_size] = 0; // null-terminator
@@ -190,7 +204,7 @@ static Size advance(Parser *parser, U32 *codepoint)
 	Size size = decode_utf8(codepoint, pointer);
 	if (!size)
 	{
-		report_error("Erroneous UTF-8 encoding");
+		err("Erroneous UTF-8 encoding");
 		return 0;
 	}
 	parser->position += size;
@@ -221,6 +235,8 @@ static Token_Type lex(Parser *parser)
 	while (check_whitespace(codepoint));
 
 	token->position = parser->position - increment;
+
+	// get the type
 	switch (codepoint)
 	{
 	case Token_Type_COLON:
@@ -231,7 +247,6 @@ static Token_Type lex(Parser *parser)
 	case Token_Type_RIGHT_BRACE:
 		token->type = (Token_Type)codepoint;
 		token->size = 1;
-		//advance(parser, &codepoint);
 		break;
 	default:
 		if (check_letter(codepoint) || codepoint == '_')
@@ -246,15 +261,18 @@ static Token_Type lex(Parser *parser)
 			while (check_letter(codepoint) || codepoint == '_');
 			token->size -= increment;
 
+			// extract it as an identifier. (if it isn't an identifier, it'll be released later).
 			token->representation = (char *)reserve_from_buffer(&parser->identifiers, token->size + 1);
 			token->representation[token->size] = 0;
 			copy_memory(token->representation, &source->pointer[token->position], token->size);
 
+			// check if it's a keyword
 			if (compare_string(token->representation, "proc") == 0)
 				token->type = Token_Type_PROC;
 			else
 				token->type = Token_Type_IDENTIFIER;
 
+			// release if it's an identifier
 			if (token->type != Token_Type_IDENTIFIER)
 				release_from_buffer(&parser->identifiers, token->size + 1);
 		}
@@ -274,7 +292,7 @@ static Token_Type lex(Parser *parser)
 		initialize_array(&string, size + 1);
 		string.pointer[size] = 0;
 		format_token((char *)string.pointer, size + 1, token);
-		report_debug("token: %s", string.pointer);
+		debug("token: %s", string.pointer);
 		uninitialize_array(&string);
 	}
 #endif
@@ -317,7 +335,7 @@ void print(const char *message, ...)
 	va_end(args);
 }
 
-void report_error(const char *message, ...)
+void err(const char *message, ...)
 {
 	++compilation_errors_count;
 
@@ -329,9 +347,9 @@ void report_error(const char *message, ...)
 	fprintf(stderr, "\n");
 }
 
-void report_debug(const char *message, ...)
+void warn(const char *message, ...)
 {
-	fprintf(stderr, "debug: ");
+	fprintf(stderr, "warning: ");
 	va_list args;
 	va_start(args, message);
 	vfprintf(stderr, message, args);
@@ -339,9 +357,9 @@ void report_debug(const char *message, ...)
 	fprintf(stderr, "\n");
 }
 
-void report_info(const char *message, ...)
+void debug(const char *message, ...)
 {
-	fprintf(stderr, "info: ");
+	fprintf(stderr, "debug: ");
 	va_list args;
 	va_start(args, message);
 	vfprintf(stderr, message, args);
@@ -388,7 +406,7 @@ bool open_file(Handle *handle, const char *path, bool writable)
 	int fd = open(path, oflags);
 	if (fd == -1)
 	{
-		report_error("system: Failed to open file: %s", get_system_error_message());
+		err("system: Failed to open file: %s", get_system_error_message());
 		return 0;
 	}
 	*handle = fd;
@@ -405,7 +423,7 @@ bool get_file_size(Handle handle, Size *size)
 	struct stat st;
 	if (fstat(handle, &st) == -1)
 	{
-		report_error("system: Failed to get file size: %s", get_system_error_message());
+		err("system: Failed to get file size: %s", get_system_error_message());
 		return 0;
 	}
 	*size = st.st_size;
@@ -418,11 +436,25 @@ bool read_file(Handle handle, void *buffer, Size *size)
 	if (r == -1)
 	{
 		*size = 0;
-		report_error("system: Failed to read file: %s", get_system_error_message());
+		err("system: Failed to read file: %s", get_system_error_message());
 		return 0;
 	}
 	*size = r;
 	return 1;
+}
+
+Size get_full_file_path(const char *path, char *buffer)
+{
+	char pathbuf[MAX_FILE_PATH_SIZE + 1];
+	if (!realpath(path, pathbuf))
+	{
+		err("system: Failed to get full file path: %s", get_system_error_message());
+		return 0;
+	}
+	Size length = get_length_of_string(pathbuf);
+	if (buffer)
+		copy_memory(buffer, pathbuf, length);
+	return length;
 }
 
 void initialize_array(Array *array, Size size, Reallocator *reallocator)

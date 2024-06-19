@@ -1,5 +1,6 @@
 #pragma once
 
+#include <linux/limits.h>
 #define ENABLE_DEBUGGING
 
 #include <string.h>
@@ -10,6 +11,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <wctype.h>
+#include <limits.h>
 
 #include <stdlib.h>
 
@@ -29,6 +31,8 @@ constexpr Size KIB = 1024;
 constexpr Size MIB = KIB * KIB;
 
 constexpr Size DEFAULT_ALIGNMENT = 8;
+
+constexpr Size MAX_FILE_PATH_SIZE = PATH_MAX;
 
 constexpr U32 LMASK1  = 0x00000001;
 constexpr U32 LMASK2  = 0x00000003;
@@ -63,6 +67,11 @@ constexpr U32 LMASK30 = 0x3fffffff;
 constexpr U32 LMASK31 = 0x7fffffff;
 constexpr U32 LMASK32 = 0xffffffff;
 
+inline Size min(Size a, Size b)
+{
+	return a < b ? a : b;
+}
+
 inline Size format(char *output, Size size, const char *format, ...)
 {
 	va_list args;
@@ -82,10 +91,20 @@ inline void set_memory(void *output, Size size, U8 value)
 	memset(output, value, size);
 }
 
+inline Difference compare_memory(const void *a, const void *b, Size s)
+{
+	return memcmp(a, b, s);
+}
+
 inline void move_memory(void *output, void *input, Size size)
 {
 	copy_memory(output, input, size);
 	set_memory(input, size, 0);
+}
+
+inline Size get_length_of_string(const char *string)
+{
+	return strlen(string);
 }
 
 inline void copy_string(void *output, const void *input)
@@ -109,10 +128,13 @@ inline Size align(Address address, Size alignment)
 void print(const char *message, ...);
 
 [[gnu::format(printf, 1, 2)]]
-void report_error(const char *message, ...);
+void err(const char *message, ...);
 
 [[gnu::format(printf, 1, 2)]]
-void report_debug(const char *message, ...);
+void warn(const char *message, ...);
+
+[[gnu::format(printf, 1, 2)]]
+void debug(const char *message, ...);
 
 constexpr Size MEMORY_PAGE_SIZE = KIB * 4;
 
@@ -141,6 +163,8 @@ void close_file(Handle handle);
 bool get_file_size(Handle handle, Size *size);
 
 bool read_file(Handle handle, void *buffer, Size *size);
+
+Size get_full_file_path(const char *path, char *buffer);
 
 // containers
 
