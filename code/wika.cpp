@@ -29,139 +29,168 @@ int main(int arguments_count, char **arguments)
 
 	if (arguments_count <= 1)
 	{
-          err("no source paths");
+          err("No source paths given");
           display_help();
           return 0;
 	}
 
-	static Size sources_count = 0;
-	static Buffer source_paths; // (char)
-	initialize_buffer(&source_paths, sizeof(char *));
-
-	// parse commandline
+	static Arena sources;
+	static Arena source_paths;
+	static Arena source_datas;
 	{
-		// parse commandline arguments
-		for (Size i = 1; i < arguments_count; ++i)
+		initialize_arena(&sources, sizeof(Source));
+		initialize_arena(&source_paths, 64);
+
+		Size sources_count = 0;
+
+		// parse commandline
 		{
-			char *argument = arguments[i];
-			if (argument[0] == '-')
+			// parse commandline arguments
+			for (Size i = 1; i < arguments_count; ++i)
 			{
-				// the argument is an option
-				if (argument[1] == '-')
+				char *argument = arguments[i];
+				if (argument[0] == '-')
 				{
-					const char *option = &argument[2];
+					// the argument is an option
+					if (argument[1] == '-')
+					{
+						const char *option = &argument[2];
+					}
+					else
+					{
+						const char option = argument[1];
+					}
 				}
 				else
 				{
-					const char option = argument[1];
-				}
-			}
-			else
-			{
-				// the argument is a source path
+					// the argument is a source path
 
-				// get the full path
-				char pathbuf[MAX_FILE_PATH_SIZE + 1];
-				Size pathbufmass = get_full_file_path(argument, pathbuf);
-				if (!pathbufmass)
-				{
-					err("Failed to get the full file path of source file: %s", pathbuf);
-					continue;
-				}
-				pathbuf[pathbufmass] = 0;
+					// get the full path
+					char path_buffer[MAX_FILE_PATH_SIZE + 1];
+					Size path_size = get_full_file_path(argument, path_buffer);
+					if (!path_size)
+					{
+						err("Failed to get the full file path of source file: %s", path_buffer);
+						continue;
+					}
+					path_buffer[path_size] = 0;
 
-				// firstly, skip if the path already exists
-				bool already_exists = 0;
-				char *iterator = (char *)source_paths.pointer;
-				for (Size i = 0; i < sources_count; ++i)
-				{
-					Size pathsz = get_length_of_string(iterator);
-					if (compare_memory(iterator, pathbuf, min(pathbufmass, pathsz)) == 0)
-						already_exists = 1;
-					iterator += pathsz + 1 /* null-terminator */;
-				}
-				if (already_exists)
-				{
-					warn("Source path is already given: %s", pathbuf);
-					continue;
-				}
+					// firstly, skip if the path already exists
+					struct Iteration_Input
+					{
+						bool already_exists;
+						const char *path_buffer;
+						const Size path_size;
+					}
+					iteration_input = {0, path_buffer, path_size};
+					iterate_over_arena(
+						&sources,
+						[](void *input_pointer, void *pointer) -> bool
+						{
+							Iteration_Input *input = (Iteration_Input *)input_pointer;
+							Source *source = (Source *)pointer;
+							if (source->path_size != input->path_size)
+								return true;
+							if (compare_memory(source->path, input->path_buffer, input->path_size) == 0)
+							{
+								input->already_exists = true;
+								return false;
+							}
+							return true;
+						},
+						&iteration_input,
+						sizeof(Source),
+						alignof(Source));
+					if (iteration_input.already_exists)
+					{
+						warn("Source path is already given: %s", path_buffer);
+						continue;
+					}
 
-				char *reservation = (char *)reserve_from_buffer(&source_paths, pathbufmass + 1);
-				copy_memory(reservation, pathbuf, pathbufmass);
-				++sources_count;
+					char *path = (char *)reserve_from_arena(&source_paths, path_size);
+					copy_memory(path, path_buffer, path_size);
+
+					Source *source = (Source *)reserve_from_arena(&sources, sizeof(Source), alignof(Source));
+					source->path_size = path_size;
+					source->path = path;
+					++sources_count;
+				}
 			}
 		}
-	}
 
-	// load the sources
-	static Buffer sources, source_datas;
-	initialize_buffer(&sources, sizeof(Source) * sources_count);
-	initialize_buffer(&source_datas, sources_count * get_memory_page_size());
-	{
-		const char *file_path = (char *)source_paths.pointer;
-		for (Size i = 0; i < sources_count; ++i, file_path += (get_length_of_string(file_path)) + 1)
-		{
+		// load the sources
+		initialize_arena(&source_datas, sources_count * get_memory_page_size());
+		iterate_over_arena(
+			&sources,
+			[](void *, void *pointer) -> bool
+			{
+				Source *source = (Source *)pointer;
+				Handle handle;
+				if (!open_file(&handle, source->path))
+				{
+					err("Failed to open source file: %s", source->path);
+					return true;
+				}
+
+				Size data_size;
+				if (!get_file_size(handle, &data_size))
+				{
+					close_file(handle);
+					err("Failed to get source file size: %s", source->path);
+					return true;
+				}
+
+				U8 *data = (U8 *)reserve_from_arena(&source_datas, data_size + 1);
+				Size read_size = data_size;
+				if (!read_file(handle, data, &read_size))
+				{
+					close_file(handle);
+					err("Failed to read source file: %s", source->path);
+					return true;
+				}
+				if (read_size != data_size)
+				{
+					close_file(handle);
+					err("Failed to read entire file: %s", source->path);
+					return true;
+				}
+				data[read_size] = 0;
 		
-			Handle file_handle;
-			if (!open_file(&file_handle, file_path, false))
-			{
-				err("Failed to open source file: %s", file_path);
-				continue;
-			}
-
-			Size file_size;
-			if (!get_file_size(file_handle, &file_size))
-			{
-				close_file(file_handle);
-				err("Failed to get source file size: %s", file_path);
-				continue;
-			}
-
-			U8 *data_pointer = (U8 *)reserve_from_buffer(&source_datas, file_size + 1 /* null-terminator */);
-			Size read_size = file_size;
-			if (!read_file(file_handle, data_pointer, &read_size))
-			{
-				close_file(file_handle);
-				err("Failed to read source file: %s", file_path);
-				continue;
-			}
-			if (read_size != file_size)
-			{
-				close_file(file_handle);
-				err("Failed to read entire file: %s", file_path);
-				continue;
-			}
-			data_pointer[read_size] = 0; // null-terminator
-			
-			Source *source = (Source *)reserve_from_buffer(&sources, sizeof(Source), 0);
-			source->path = file_path;
-			source->handle = file_handle;
-			source->size = file_size;
-			source->pointer = data_pointer;
-		}
+				source->handle = handle;
+				source->data_size = data_size;
+				source->data = data;
+				return true;
+			},
+			0,
+			sizeof(Source),
+			alignof(Source));
+		if (compilation_errors_count != 0)
+			terminate();
 	}
 
-	if (compilation_errors_count != 0)
-	{
-		goto finish;
-	}
-
-	for (Size i = 0; i < sources_count; ++i)
-	{
-		Source *source = &((Source *)sources.pointer)[i];
-
-		print("compiling %s...\n", source->path);
-
-		Parser parser;
-		initialize_parser(&parser, source);
-
-		Size errors_count = parse(&parser);
-		if (errors_count)
+	iterate_over_arena(
+		&sources,
+		[](void *, void *pointer) -> bool
 		{
-		}
-	}
+			Source *source = (Source *)pointer;
 
-finish:
+			print("Compiling %s...\n", source->path);
+
+			#if 0
+			Parser parser;
+			initialize_parser(&parser, source);
+
+			Size errors_count = parse(&parser);
+			if (errors_count)
+			{
+			}
+			#endif
+			return true;
+		},
+		0,
+		sizeof(Source),
+		alignof(Source));
+
 	terminate();
 	return exit_code;
 }
@@ -200,7 +229,7 @@ void initialize_parser(Parser *parser, const Source *source)
 
 static Size advance(Parser *parser, U32 *codepoint)
 {
-	U8 *pointer = &parser->source->pointer[parser->position];
+	U8 *pointer = &parser->source->data[parser->position];
 	Size size = decode_utf8(codepoint, pointer);
 	if (!size)
 	{
@@ -264,7 +293,7 @@ static Token_Type lex(Parser *parser)
 			// extract it as an identifier. (if it isn't an identifier, it'll be released later).
 			token->representation = (char *)reserve_from_buffer(&parser->identifiers, token->size + 1);
 			token->representation[token->size] = 0;
-			copy_memory(token->representation, &source->pointer[token->position], token->size);
+			copy_memory(token->representation, &source->data[token->position], token->size);
 
 			// check if it's a keyword
 			if (compare_string(token->representation, "proc") == 0)
@@ -289,10 +318,9 @@ static Token_Type lex(Parser *parser)
 	{
 		Size size = format_token(0, 0, token);
 		Array string;
-		initialize_array(&string, size + 1);
-		string.pointer[size] = 0;
+		initialize_array(&string, size + 1, 0);
+		((char *)string.pointer)[size] = 0;
 		format_token((char *)string.pointer, size + 1, token);
-		debug("token: %s", string.pointer);
 		uninitialize_array(&string);
 	}
 #endif
@@ -324,6 +352,15 @@ Size get_alignment_addition(Address address, Size alignment)
 	if (Size mod = address & (alignment - 1); mod != 0)
 		addition = alignment - mod;
 	return addition;
+}
+
+Size get_alignment_subtraction(Address address, Size alignment)
+{
+	assert(alignment % 2 == 0);
+	Size subtraction = 0;
+	if (Size mod = address & (alignment - 1); mod != 0)
+		subtraction = mod;
+	return subtraction;
 }
 
 [[gnu::format(printf, 1, 2)]]
@@ -372,9 +409,14 @@ Size get_memory_page_size(void)
 	return getpagesize();
 }
 
+static Size total_program_memory_allocation_size = 0;
+
 void *allocate(Size size)
 {
-	return malloc(size);
+	void *result = malloc(size);
+	if (result)
+		total_program_memory_allocation_size += size;
+	return result;
 }
 
 void deallocate(void *pointer)
@@ -392,7 +434,17 @@ void *allocate_virtual_memory(void *address, Size size)
 	void *result = mmap(address, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 	if (result == MAP_FAILED)
 		result = 0;
+	else
+		total_program_memory_allocation_size += align(size, get_memory_page_size());
 	return result;
+}
+
+void deallocate_virtual_memory(void *pointer, Size size)
+{
+	if (munmap(pointer, size) == -1)
+	{
+		// idek
+	}
 }
 
 const char *get_system_error_message(void)
@@ -457,66 +509,180 @@ Size get_full_file_path(const char *path, char *buffer)
 	return length;
 }
 
-void initialize_array(Array *array, Size size, Reallocator *reallocator)
+void initialize_array(Array *array, Size size, void *pointer)
 {
-	array->pointer = 0;
-	resize_array(array, size, reallocator);
+	if (pointer)
+	{
+		array->pointer = pointer;
+		array->size = size;
+	}
+	else
+	{
+		array->pointer = 0;
+		resize_array(array, size);
+	}
 }
 
-void uninitialize_array(Array *array, Reallocator *reallocator)
+void uninitialize_array(Array *array)
 {
-	resize_array(array, 0, reallocator);
+	resize_array(array, 0);
 }
 
-void resize_array(Array *array, Size new_size, Reallocator *reallocator)
+void resize_array(Array *array, Size new_size)
 {
-	array->pointer = (U8 *)reallocator(array->pointer, new_size);
+	array->pointer = (U8 *)reallocate(array->pointer, new_size);
 	array->size = new_size;
 }
 
-void initialize_buffer(Buffer *buffer, Size size, Reallocator *reallocator)
+void initialize_buffer(Buffer *buffer, Size size, void *pointer)
 {
-	initialize_array(buffer, size, reallocator);
+	initialize_array(buffer, size, pointer);
 	buffer->mass = 0;
 }
 
-void uninitialize_buffer(Buffer *buffer, Reallocator *reallocator)
+void uninitialize_buffer(Buffer *buffer)
 {
-	uninitialize_array(buffer, reallocator);
+	uninitialize_array(buffer);
 	buffer->mass = 0;
 }
 
-void transform_buffer_into_array(Buffer *buffer, Array *array, Reallocator *reallocator)
+void transform_buffer_into_array(Buffer *buffer, Array *array)
 {
-	resize_array(buffer, buffer->mass, reallocator);
+	resize_array(buffer, buffer->mass);
 	move_memory(array, buffer, sizeof(Array));
 }
 
-void expand_buffer(Buffer *buffer, Size size, Reallocator *reallocator)
+void expand_buffer(Buffer *buffer, Size size)
 {
 	Size new_size = size + buffer->size + buffer->size / 2;
-	resize_array(buffer, new_size, reallocator);
+	resize_array(buffer, new_size);
 }
 
-void *ensure_buffer(Buffer *buffer, Size size, Reallocator *reallocator)
+void *ensure_buffer(Buffer *buffer, Size size)
 {
 	Size space = buffer->size - buffer->mass;
 	if (space < size)
-		expand_buffer(buffer, size, reallocator);
-	return &buffer->pointer[buffer->mass];
+		expand_buffer(buffer, size);
+	return &((U8 *)buffer->pointer)[buffer->mass];
 }
 
-void *reserve_from_buffer(Buffer *buffer, Size size, Reallocator *reallocator)
+void *reserve_from_buffer(Buffer *buffer, Size size, Size alignment)
 {
-	void *end = ensure_buffer(buffer, size, reallocator);
+	Size addition = get_alignment_addition((Address)buffer->pointer + buffer->mass, alignment);
+	U8 *end = (U8 *)ensure_buffer(buffer, alignment + size);
+	buffer->mass += addition;
+	void *result = end + buffer->mass;
 	buffer->mass += size;
-	return end;
+	return result;
 }
 
-void release_from_buffer(Buffer *buffer, Size size)
+void release_from_buffer(Buffer *buffer, Size size, Size alignment)
 {
-	assert(buffer->mass >= size);
 	buffer->mass -= size;
+	Size subtraction = get_alignment_subtraction((Address)buffer->pointer + buffer->mass, alignment);
+	buffer->mass -= subtraction;
+	// TODO: maybe we should assert that size+alignment <= buffer->mass?
+}
+
+template<typename T>
+void attach_singly(Singly<T> *singly, Singly<T> *other)
+{
+	if (singly->other && other)
+		other->other = singly->other;
+	singly->other = other;
+}
+
+static void initialize_arena_buffer(Arena_Buffer *buffer, Size size)
+{
+	buffer->pointer = buffer;
+	buffer->size = size;
+	buffer->other = 0;
+	buffer->mass = sizeof(Arena_Buffer);
+}
+
+void initialize_arena(Arena *arena, Size size)
+{
+	size = align(sizeof(Buffer) + size, get_memory_page_size());
+	arena->first = (Arena_Buffer *)allocate_virtual_memory(0, size);
+	initialize_arena_buffer(arena->first, size);
+	arena->last = arena->first;
+}
+
+void uninitialize_arena(Arena *arena)
+{
+	Arena_Pointer pointer =
+	{
+		.arena = arena,
+		.buffer = arena->first,
+		.offset = 0,
+	};
+	set_arena(&pointer);
+}
+
+void *reserve_from_arena(Arena *arena, Size size, Size alignment)
+{
+	Arena_Buffer *buffer = arena->last;
+	Size addition = get_alignment_addition((Address)buffer->pointer + buffer->mass, alignment);
+	Size space = buffer->size - buffer->mass;
+	if (space < addition + size)
+	{
+
+		addition = get_alignment_addition(get_memory_page_size(), alignment);
+		Size buffer_size = align(addition + size, get_memory_page_size());
+		buffer = (Arena_Buffer *)allocate_virtual_memory(0, buffer_size);
+		initialize_arena_buffer(buffer, size);
+		attach_singly(arena->last, buffer);
+		arena->last = buffer;
+	}
+	buffer->mass += addition;
+	void *result = (U8 *)buffer->pointer + buffer->mass;
+	buffer->mass += size;
+	return result;
+}
+
+void iterate_over_arena(Arena *arena, bool (*procedure)(void *input, void *i), void *input, Size size, Size alignment)
+{
+	Arena_Buffer *buffer = arena->first;
+
+	Size count = 0;
+	do
+	{
+		Size initial_offset = sizeof(Arena_Buffer) + get_alignment_addition((Address)buffer->pointer + sizeof(Arena_Buffer), alignment);
+		for (Size i = initial_offset; i < buffer->mass; i += size)
+		{
+			if (!procedure(input, (U8 *)buffer->pointer + i))
+				goto stop;
+		}
+		buffer = buffer->other;
+	}
+	while (buffer);
+stop:
+	return;
+}
+
+void get_arena_pointer(Arena *arena, Arena_Pointer *pointer)
+{
+	assert(arena->last);
+
+	*pointer =
+	{
+		.arena = arena,
+		.buffer = arena->last,
+		.offset = arena->last->mass,
+	};
+}
+
+void set_arena(Arena_Pointer *pointer)
+{
+	Arena_Buffer *buffer = pointer->buffer->other;
+	while (buffer)
+	{
+		Arena_Buffer *other = buffer->other;
+		deallocate_virtual_memory(buffer, buffer->size);
+		buffer = other;
+	}
+	pointer->arena->last = pointer->buffer;
+	pointer->buffer->mass = pointer->offset;
 }
 
 constexpr U8 utf8_class_table[32] =

@@ -1,3 +1,9 @@
+# Todo
+
+[x] arena data structure
+[ ] use arenas to store sources
+[ ] change way of storing identifiers
+
 # Syntax
 
 declaration

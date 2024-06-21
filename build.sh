@@ -5,7 +5,7 @@ set -e
 compiler=g++
 executable="wika"
 
-compiler_flags="-O2 -fPIC -Wall -Wextra"
+compiler_flags="-O0 -fPIC -Wall -Wextra"
 linker_flags="-pthread -ldl -lm"
 if [ "$1" == "release" ]
 then

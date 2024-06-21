@@ -1,6 +1,5 @@
 #pragma once
 
-#include <linux/limits.h>
 #define ENABLE_DEBUGGING
 
 #include <string.h>
@@ -119,6 +118,8 @@ inline Difference compare_string(const void *former, const void *latter)
 
 Size get_alignment_addition(Address address, Size alignment);
 
+Size get_alignment_subtraction(Address address, Size alignment);
+
 inline Size align(Address address, Size alignment)
 {
 	return address + get_alignment_addition(address, alignment);
@@ -148,7 +149,9 @@ void *reallocate(void *pointer, Size size);
 
 void *allocate_virtual_memory(void *address, Size size);
 
-using Reallocator = void *(void *, Size);
+void deallocate_virtual_memory(void *pointer, Size size);
+
+//using Allocator = void *(void *, Size);
 
 // platform-specific stuff
 
@@ -156,7 +159,7 @@ using Handle = intptr_t;
 
 const char *get_system_error_message(void);
 
-bool open_file(Handle *handle, const char *path, bool writable);
+bool open_file(Handle *handle, const char *path, bool writable = 0);
 
 void close_file(Handle handle);
 
@@ -170,35 +173,71 @@ Size get_full_file_path(const char *path, char *buffer);
 
 struct Array
 {
-	U8 *pointer;
+	void *pointer;
 	Size size;
 
 };
 
-void initialize_array(Array *array, Size size, Reallocator *reallocator = reallocate);
+void initialize_array(Array *array, Size size, void *pointer);
 
-void uninitialize_array(Array *array, Reallocator *reallocator = reallocate);
+void uninitialize_array(Array *array);
 
-void resize_array(Array *array, Size new_size, Reallocator *reallocator = reallocate);
+void resize_array(Array *array, Size new_size);
 
 struct Buffer : Array
 {
 	Size mass;
 };
 
-void initialize_buffer(Buffer *buffer, Size size, Reallocator *reallocator = reallocate);
+void initialize_buffer(Buffer *buffer, Size size, void *pointer);
 
-void uninitialize_buffer(Buffer *buffer, Reallocator *reallocator = reallocate);
+void uninitialize_buffer(Buffer *buffer);
 
-void transform_buffer_into_array(Buffer *buffer, Array *array, Reallocator *reallocator = reallocate);
+void transform_buffer_into_array(Buffer *buffer, Array *array);
 
-void expand_buffer(Buffer *buffer, Size size, Reallocator *reallocator = reallocate);
+void expand_buffer(Buffer *buffer, Size size);
 
-void *ensure_buffer(Buffer *buffer, Size size, Reallocator *reallocator = reallocate);
+void *ensure_buffer(Buffer *buffer, Size size);
 
-void *reserve_from_buffer(Buffer *buffer, Size size, Reallocator *reallocator = reallocate);
+void *reserve_from_buffer(Buffer *buffer, Size size, Size alignment = DEFAULT_ALIGNMENT);
 
-void release_from_buffer(Buffer *buffer, Size size);
+void release_from_buffer(Buffer *buffer, Size size, Size alignment = DEFAULT_ALIGNMENT);
+
+template<typename T>
+struct Singly : T
+{
+	Singly *other;
+};
+
+template<typename T>
+void attach_singly(Singly<T> *singly, Singly<T> *other);
+
+using Arena_Buffer = Singly<Buffer>;
+
+struct Arena
+{
+	Arena_Buffer *first;
+	Arena_Buffer *last;
+};
+
+void initialize_arena(Arena *arena, Size size);
+
+void uninitialize_arena(Arena *arena);
+
+void *reserve_from_arena(Arena *arena, Size size, Size alignment = DEFAULT_ALIGNMENT);
+
+void iterate_over_arena(Arena *arena, bool (*procedure)(void *input_pointer, void *pointer), void *input, Size size, Size alignment);
+
+struct Arena_Pointer
+{
+	Arena *arena;
+	Arena_Buffer *buffer;
+	Size offset;
+};
+
+void get_arena_pointer(Arena *arena, Arena_Pointer *pointer);
+
+void set_arena(Arena_Pointer *pointer);
 
 // Unicode
 
@@ -210,10 +249,11 @@ Size get_utf8_size(U32 codepoint);
 
 struct Source
 {
+	Size path_size;
 	const char *path;
 	Handle handle;
-	Size size;
-	U8 *pointer;
+	Size data_size;
+	U8 *data;
 };
 
 enum Token_Type
