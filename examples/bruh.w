@@ -16,9 +16,9 @@ FOO: S32 = 0; // initialized as `0`
 do_foo :: proc;                                       // empty
 do_foo :: proc(foo: S32);                             // with parameters
 do_foo :: proc(foo: S32) -> S32;                      // with return value
-do_foo :: proc(foo: S32) -> S32 {return foo;};        // returning
+do_foo :: proc(foo: S32) -> S32 {return foo};        // returning
 do_foo :: proc(foo: S32) -> (bar: S32);               // with named return value
-do_foo :: proc(foo: S32) -> (bar: S32) {bar = foo;};  // returning by setting
+do_foo :: proc(foo: S32) -> (bar: S32) {bar = foo};  // returning by setting
 
 // structures
 Foo :: struct;                            // empty
@@ -56,40 +56,49 @@ x := true ? "Foo" : "Bar";
 
 true ? {
 
-} : false ? {
+}, false ? {
 
 } : {
-}
+};
 
 Day :: enum {SUNDAY = 0, MONDAY = 1, TUESDAY = 2, WEDNSDAY = 3};
 day: Day = 'SUNDAY;
 
 // switches
 message := day == {
-	.SUNDAY                                   ? "bruh.... we got fucking school tomorrow";
-	[.MONDAY, .TUESDAY, .WEDNSDAY, .THURSDAY] ? "fuck school";
-	.FRIDAY                                   ? "let's go! i can stay up today cuz there's no school tomorrow!";
-	.SATURDAY                                 ? "yay! no school!";
-} : { "<unknown day>" };
+	.SUNDAY                                 ? "bruh.... we got fucking school tomorrow",
+	.MONDAY, .TUESDAY, .WEDNSDAY, .THURSDAY ? "fuck school",
+	.FRIDAY                                 ? "let's go! i can stay up today cuz there's no school tomorrow!",
+	.SATURDAY                               ? "yay! no school!",
+} : "<unknown day>";
+
+array: []S32 = (0, 1, 2);
+
+tuple: (S32, S32), tuple2: (U8, U8, U8) = (7, 21), (1, 2, 3);
+
+result: S32;
+result, successful: Bool = do_foo;
+
+(r, g, b): U8, color: (U8, U8, U8) = 0, 0, 0, (0, 0, 0);
 
 // labels
 {
 	i := 0;
-[beginning]
-	i == 10 ? jump [ending];
-	i += 1;
+[a]
+	i == 10 ? jump_to z;
 	print "%i", i;
-	jump [beginning];
-[ending]
+	i += 1;
+	jump_to a;
+[z]
 }
 
 
 {
-[poop]
+[a]
 	{
-	[poop]
-		jump poop;   // jumps to the `poop` from within the same scope
-		jump ..poop; // jumps to the `poop` from within the prior scope
+	[a]
+		jump_to a;   // jumps to the `a` from within the same scope
+		jump_to ..a; // jumps to the `a` from within the prior scope
 	}
 }
 

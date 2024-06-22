@@ -1,8 +1,10 @@
 # Todo
 
-[x] arena data structure
-[ ] use arenas to store sources
-[ ] change way of storing identifiers
+[x] arena data structure.
+[x] use arenas to store sources.
+[ ] change way of storing identifiers.
+	[ ] when lexing an identifier, don't copy the identifier from source to a
+		buffer, just null terminate the identifier then unterminate it.
 
 # Syntax
 

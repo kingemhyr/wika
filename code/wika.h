@@ -275,9 +275,10 @@ struct Source
 
 enum Token_Type
 {
+	Token_Type_UNKNOWN           = -1,
 	Token_Type_NONE              = 0,
-	Token_Type_IDENTIFIER        = 1,
-	Token_Type_PROC              = 2,
+	Token_Type_IDENTIFIER        = 2,
+	Token_Type_PROC              = 3,
 	Token_Type_COLON             = ':',
 	Token_Type_SEMICOLON         = ';',
 	Token_Type_LEFT_PARENTHESIS  = '(',
@@ -291,7 +292,6 @@ struct Token
 	Token_Type type;
 	Size position;
 	Size size;
-	char *representation;
 };
 
 Size format_token(char *buffer, Size size, const Token *token);
@@ -302,15 +302,68 @@ struct Location
 	Size position;
 };
 
+struct Scope;
+
+enum Node_Type
+{
+};
+
+struct Node
+{
+	Node_Type type;
+};
+
+struct Parser;
+
+Node *allocate_node(Parser *parser, Node_Type type);
+
+struct String
+{
+	const Utf8 *pointer;
+	Size size;
+};
+
+struct Artifact
+{
+	String name;
+	Node *node;
+};
+
+template<typename T>
+struct List
+{
+};
+
+struct Scope
+{
+	Scope *parent;
+	Size index; // index from parent->children
+	List<Scope> children;
+	List<Artifact> artifacts;
+};
+
 struct Parser
 {
 	Location location;
 	Token token;
 	Buffer identifiers;
+
+	Scope global_scope;
+	Scope *current_scope;
 };
 
 void initialize_parser(Parser *parser, const Source *source);
 
 Size parse(Parser *parser);
 
-void report_parsing_error(Parser *parser, const char *format, ...);
+Artifact *reserve_artifact(Parser *parser);
+
+void v_report_parsing_error(Parser *parser, Size beginning, Size ending, const char *message, va_list args);
+
+inline void report_parsing_token_error(Parser *parser, const char *message, ...)
+{
+	va_list args;
+	va_start(args, message);
+	v_report_parsing_error(parser, parser->token.position, parser->location.position, message, args);
+	va_end(args);
+}

@@ -29,7 +29,7 @@ int main(int arguments_count, char **arguments)
 
 	if (arguments_count <= 1)
 	{
-		report_error("No source paths given");
+		report_error("no source paths given.");
 		display_help();
 		return 0;
 	}
@@ -70,7 +70,7 @@ int main(int arguments_count, char **arguments)
 					Size path_size = get_full_file_path(argument, path_buffer);
 					if (!path_size)
 					{
-						report_error("Failed to get the full file path of source file: %s", path_buffer);
+						report_error("failed to get the full file path of source file: %s.", path_buffer);
 						continue;
 					}
 					path_buffer[path_size] = 0;
@@ -103,7 +103,7 @@ int main(int arguments_count, char **arguments)
 						alignof(Source));
 					if (iteration_input.already_exists)
 					{
-						report_warning("Source path is already given: %s", path_buffer);
+						report_warning("source path is already given: %s", path_buffer);
 						continue;
 					}
 
@@ -128,7 +128,7 @@ int main(int arguments_count, char **arguments)
 				Handle handle;
 				if (!open_file(&handle, source->path))
 				{
-					report_error("Failed to open source file: %s", source->path);
+					report_error("failed to open source file: %s.", source->path);
 					return true;
 				}
 
@@ -136,7 +136,7 @@ int main(int arguments_count, char **arguments)
 				if (!get_file_size(handle, &data_size))
 				{
 					close_file(handle);
-					report_error("Failed to get source file size: %s", source->path);
+					report_error("failed to get source file size: %s.", source->path);
 					return true;
 				}
 
@@ -145,13 +145,13 @@ int main(int arguments_count, char **arguments)
 				if (!read_file(handle, data, &read_size))
 				{
 					close_file(handle);
-					report_error("Failed to read source file: %s", source->path);
+					report_error("failed to read source file: %s.", source->path);
 					return true;
 				}
 				if (read_size != data_size)
 				{
 					close_file(handle);
-					report_error("Failed to read entire file: %s", source->path);
+					report_error("failed to read entire file: %s.", source->path);
 					return true;
 				}
 				data[read_size] = 0;
@@ -174,15 +174,14 @@ int main(int arguments_count, char **arguments)
 		{
 			Source *source = (Source *)pointer;
 
-			print("Compiling %s...\n", source->path);
+			print("compiling \e[1m%s\e[0m...\n", source->path);
 
 			Parser parser;
 			initialize_parser(&parser, source);
 
 			Size errors_count = parse(&parser);
 			if (errors_count)
-			{
-			}
+				return false;
 			return true;
 		},
 		0,
@@ -231,7 +230,7 @@ static Size advance(Parser *parser, U32 *codepoint)
 	Size size = decode_utf8(codepoint, pointer);
 	if (!size)
 	{
-		report_error("Erroneous UTF-8 encoding");
+		report_error("erroneous UTF-8 encoding.");
 		return 0;
 	}
 	parser->location.position += size;
@@ -293,6 +292,7 @@ static Token_Type lex(Parser *parser)
 			}
 			while (check_letter(codepoint) || codepoint == '_' || check_number(codepoint));
 			token->size -= increment;
+			parser->location.position -= increment;
 
 			// extract it as an identifier. (if it isn't an identifier, it'll be released later).
 			token->representation = (char *)reserve_from_buffer(&parser->identifiers, token->size + 1);
@@ -313,7 +313,7 @@ static Token_Type lex(Parser *parser)
 		{
 			token->type = Token_Type_NONE;
 			token->size = 1;
-			report_parsing_error(parser, "Unknown token: %c");
+			report_parsing_token_error(parser, "unknown token: \"%c\".", codepoint);
 		}
 		break;
 	}
@@ -342,60 +342,69 @@ Size parse(Parser *parser)
 		Token_Type type = lex(parser);
 		if (type == Token_Type_NONE)
 			break;
+
+		switch (type)
+		{
+		case Token_Type_IDENTIFIER:
+			{
+				Artifact *artifact = reserve_artifact(parser);
+			}
+			break;
+		default:
+			report_parsing_token_error(parser, "expected an identifier token.");
+			++errors_count;
+			break;
+		}
+
+		if (errors_count)
+		{
+			do
+				type = lex(parser);
+			while (type != Token_Type_NONE);
+			break;
+		}
 	}
 
 	if (errors_count)
 		return errors_count;
-	
+
 	return 0;
 }
 
-void report_parsing_error(Parser *parser, const char *message, ...)
+void v_report_parsing_error(Parser *parser, Size beginning, Size ending, const char *message, va_list args)
 {
 	++compilation_errors_count;
 	fprintf(stderr, "\e[1m%s:%lu: \e[31merror:\e[0m ", parser->location.source->path, parser->location.position);
-	va_list args;
-	va_start(args, message);
 	vfprintf(stderr, message, args);
-	va_end(args);
-	Size position = parser->location.position;
-	char *pointer = (char *)parser->location.source->data;
-	for (; position != 0; --position)
+	putc('\n', stderr);
+
+	fprintf(stderr, "\t| ");
+	char *data = (char *)parser->location.source->data;
+	Size line_offset = beginning;
+	while (line_offset)
 	{
-		if (pointer[position - 1] == '\n')
+		if (data[line_offset--] == '\n')
 			break;
 	}
-	pointer += position;
-	char *end = find_character(pointer, '\n');
-	Size linesz = end - pointer;
-	char buf[linesz + 1];
-	copy_memory(buf, pointer, linesz);
-	buf[linesz + 16] = 0;
-	Size offset = parser->location.position - position - 1;
-	const char esc[] = "\e[1;31m";
-	Size escsz = sizeof(esc) - 1;
-	{
-		char *p = buf + offset;
-		move_memory(p + escsz, p, linesz - offset);
-		buf[linesz + escsz] = 0;
-		copy_memory(p, esc, escsz);
-	}
-	{
-		const char esc2[] = "\e[0m";
-		Size esc2sz = sizeof(esc2) - 1;
-		char *p = buf + offset + escsz + 1;
-		move_memory(p + esc2sz, p, linesz - offset);
-		buf[linesz + escsz + esc2sz] = 0;
-		copy_memory(p, esc2, esc2sz);
-	}
-	fprintf(stderr, "\n| %s\n  ", buf);
+	char *line = &data[line_offset];
+	Size line_size = find_character(line, '\n') - line;
 
-
-	for (Size i = 0; i < offset; ++i)
+	for (Size i = 0; i < beginning; ++i)
+		putc(line[i], stderr);
+	fprintf(stderr, "\e[1;31m");
+	for (Size i = beginning; i < ending; ++i)
+		putc(line[i], stderr);
+	fprintf(stderr, "\e[0m");
+	for (Size i = ending; i < line_size; ++i)
+		putc(line[i], stderr);
+	
+	fprintf(stderr, "\n\t  ");
+	for (Size i = 0; i < beginning; ++i)
 		putc(' ', stderr);
 
 	fprintf(stderr, "\e[1;31m");
-	for (Size i = 0; i < parser->token.size; ++i)
+	Size error_length = ending - beginning;
+	for (Size i = 0; i < error_length; ++i)
 		putc('^', stderr);
 	fprintf(stderr, "\e[0m\n");
 }
@@ -513,7 +522,7 @@ bool open_file(Handle *handle, const char *path, bool writable)
 	int fd = open(path, oflags);
 	if (fd == -1)
 	{
-		report_error("system: Failed to open file: %s", get_system_error_message());
+		report_error("system: failed to open file: %s.", get_system_error_message());
 		return 0;
 	}
 	*handle = fd;
@@ -530,7 +539,7 @@ bool get_file_size(Handle handle, Size *size)
 	struct stat st;
 	if (fstat(handle, &st) == -1)
 	{
-		report_error("system: Failed to get file size: %s", get_system_error_message());
+		report_error("system: failed to get file size: %s.", get_system_error_message());
 		return 0;
 	}
 	*size = st.st_size;
@@ -543,7 +552,7 @@ bool read_file(Handle handle, void *buffer, Size *size)
 	if (r == -1)
 	{
 		*size = 0;
-		report_error("system: Failed to read file: %s", get_system_error_message());
+		report_error("system: failed to read file: %s.", get_system_error_message());
 		return 0;
 	}
 	*size = r;
@@ -555,7 +564,7 @@ Size get_full_file_path(const char *path, char *buffer)
 	char pathbuf[MAX_FILE_PATH_SIZE + 1];
 	if (!realpath(path, pathbuf))
 	{
-		report_error("system: Failed to get full file path: %s", get_system_error_message());
+		report_error("system: failed to get full file path: %s.", get_system_error_message());
 		return 0;
 	}
 	Size length = get_length_of_string(pathbuf);
@@ -796,9 +805,9 @@ Size get_utf8_size(U32 codepoint)
 {
 	Size size =
 		codepoint <= 0x7f     ? 1 :
-        codepoint <= 0x7ff    ? 2 :
-    	codepoint <= 0xffff   ? 3 :
-    	codepoint <= 0x10ffff ? 4 :
+		codepoint <= 0x7ff    ? 2 :
+		codepoint <= 0xffff   ? 3 :
+		codepoint <= 0x10ffff ? 4 :
 		0;
 	return size;
 }
@@ -814,4 +823,8 @@ void initialize(void)
 
 void terminate(void)
 {
+	if (compilation_errors_count != 1)
+		print("terminating with \e[1;31m%lu errors\e[0m...\n", compilation_errors_count);
+	else if (compilation_errors_count == 1)
+		print("terminating with \e[1;31m%lu error\e[0m...\n", compilation_errors_count);
 }
