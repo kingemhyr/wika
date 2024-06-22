@@ -95,10 +95,25 @@ inline Difference compare_memory(const void *a, const void *b, Size s)
 	return memcmp(a, b, s);
 }
 
-inline void move_memory(void *output, void *input, Size size)
+inline void move_memory(void *output, const void *input, Size size)
 {
-	copy_memory(output, input, size);
-	set_memory(input, size, 0);
+	memmove(output, input, size);
+}
+
+#if 0
+inline void insert_memory(void *output, const void *input, Size size)
+{
+}
+#endif
+
+inline char *find_string(char *haystack, const char *needle)
+{
+	return strstr(haystack, needle);
+}
+
+inline char *find_character(char *haystack, char needle)
+{
+	return strchr(haystack, needle);
 }
 
 inline Size get_length_of_string(const char *string)
@@ -129,10 +144,10 @@ inline Size align(Address address, Size alignment)
 void print(const char *message, ...);
 
 [[gnu::format(printf, 1, 2)]]
-void err(const char *message, ...);
+void report_error(const char *message, ...);
 
 [[gnu::format(printf, 1, 2)]]
-void warn(const char *message, ...);
+void report_warning(const char *message, ...);
 
 [[gnu::format(printf, 1, 2)]]
 void debug(const char *message, ...);
@@ -241,6 +256,8 @@ void set_arena(Arena_Pointer *pointer);
 
 // Unicode
 
+using Utf8 = U8;
+
 Size decode_utf8(U32 *codepoint, const U8 *string);
 
 Size get_utf8_size(U32 codepoint);
@@ -279,10 +296,15 @@ struct Token
 
 Size format_token(char *buffer, Size size, const Token *token);
 
-struct Parser
+struct Location
 {
 	const Source *source;
 	Size position;
+};
+
+struct Parser
+{
+	Location location;
 	Token token;
 	Buffer identifiers;
 };
@@ -290,3 +312,5 @@ struct Parser
 void initialize_parser(Parser *parser, const Source *source);
 
 Size parse(Parser *parser);
+
+void report_parsing_error(Parser *parser, const char *format, ...);

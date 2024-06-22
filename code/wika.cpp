@@ -29,9 +29,9 @@ int main(int arguments_count, char **arguments)
 
 	if (arguments_count <= 1)
 	{
-          err("No source paths given");
-          display_help();
-          return 0;
+		report_error("No source paths given");
+		display_help();
+		return 0;
 	}
 
 	static Arena sources;
@@ -70,7 +70,7 @@ int main(int arguments_count, char **arguments)
 					Size path_size = get_full_file_path(argument, path_buffer);
 					if (!path_size)
 					{
-						err("Failed to get the full file path of source file: %s", path_buffer);
+						report_error("Failed to get the full file path of source file: %s", path_buffer);
 						continue;
 					}
 					path_buffer[path_size] = 0;
@@ -103,7 +103,7 @@ int main(int arguments_count, char **arguments)
 						alignof(Source));
 					if (iteration_input.already_exists)
 					{
-						warn("Source path is already given: %s", path_buffer);
+						report_warning("Source path is already given: %s", path_buffer);
 						continue;
 					}
 
@@ -128,7 +128,7 @@ int main(int arguments_count, char **arguments)
 				Handle handle;
 				if (!open_file(&handle, source->path))
 				{
-					err("Failed to open source file: %s", source->path);
+					report_error("Failed to open source file: %s", source->path);
 					return true;
 				}
 
@@ -136,7 +136,7 @@ int main(int arguments_count, char **arguments)
 				if (!get_file_size(handle, &data_size))
 				{
 					close_file(handle);
-					err("Failed to get source file size: %s", source->path);
+					report_error("Failed to get source file size: %s", source->path);
 					return true;
 				}
 
@@ -145,13 +145,13 @@ int main(int arguments_count, char **arguments)
 				if (!read_file(handle, data, &read_size))
 				{
 					close_file(handle);
-					err("Failed to read source file: %s", source->path);
+					report_error("Failed to read source file: %s", source->path);
 					return true;
 				}
 				if (read_size != data_size)
 				{
 					close_file(handle);
-					err("Failed to read entire file: %s", source->path);
+					report_error("Failed to read entire file: %s", source->path);
 					return true;
 				}
 				data[read_size] = 0;
@@ -176,7 +176,6 @@ int main(int arguments_count, char **arguments)
 
 			print("Compiling %s...\n", source->path);
 
-			#if 0
 			Parser parser;
 			initialize_parser(&parser, source);
 
@@ -184,7 +183,6 @@ int main(int arguments_count, char **arguments)
 			if (errors_count)
 			{
 			}
-			#endif
 			return true;
 		},
 		0,
@@ -224,19 +222,19 @@ Size format_token(char *buffer, Size size, const Token *token)
 void initialize_parser(Parser *parser, const Source *source)
 {
 	set_memory(parser, sizeof(Parser), 0);
-	parser->source = source;
+	parser->location.source = source;
 }
 
 static Size advance(Parser *parser, U32 *codepoint)
 {
-	U8 *pointer = &parser->source->data[parser->position];
+	U8 *pointer = &parser->location.source->data[parser->location.position];
 	Size size = decode_utf8(codepoint, pointer);
 	if (!size)
 	{
-		err("Erroneous UTF-8 encoding");
+		report_error("Erroneous UTF-8 encoding");
 		return 0;
 	}
-	parser->position += size;
+	parser->location.position += size;
 	return size;
 
 }
@@ -251,10 +249,15 @@ static bool check_letter(U32 codepoint)
 	return iswalpha(codepoint);
 }
 
+static bool check_number(U32 codepoint)
+{
+	return iswdigit(codepoint);
+}
+
 static Token_Type lex(Parser *parser)
 {
 	Token *token = &parser->token;
-	const Source *source = parser->source;
+	const Source *source = parser->location.source;
 	U32 codepoint;
 	Size increment;
 
@@ -263,11 +266,12 @@ static Token_Type lex(Parser *parser)
 		increment = advance(parser, &codepoint);
 	while (check_whitespace(codepoint));
 
-	token->position = parser->position - increment;
+	token->position = parser->location.position - increment;
 
 	// get the type
 	switch (codepoint)
 	{
+	case Token_Type_NONE:
 	case Token_Type_COLON:
 	case Token_Type_SEMICOLON:
 	case Token_Type_LEFT_PARENTHESIS:
@@ -287,7 +291,7 @@ static Token_Type lex(Parser *parser)
 				if (!codepoint)
 					break;
 			}
-			while (check_letter(codepoint) || codepoint == '_');
+			while (check_letter(codepoint) || codepoint == '_' || check_number(codepoint));
 			token->size -= increment;
 
 			// extract it as an identifier. (if it isn't an identifier, it'll be released later).
@@ -308,7 +312,8 @@ static Token_Type lex(Parser *parser)
 		else
 		{
 			token->type = Token_Type_NONE;
-			token->size = 0;
+			token->size = 1;
+			report_parsing_error(parser, "Unknown token: %c");
 		}
 		break;
 	}
@@ -345,6 +350,56 @@ Size parse(Parser *parser)
 	return 0;
 }
 
+void report_parsing_error(Parser *parser, const char *message, ...)
+{
+	++compilation_errors_count;
+	fprintf(stderr, "\e[1m%s:%lu: \e[31merror:\e[0m ", parser->location.source->path, parser->location.position);
+	va_list args;
+	va_start(args, message);
+	vfprintf(stderr, message, args);
+	va_end(args);
+	Size position = parser->location.position;
+	char *pointer = (char *)parser->location.source->data;
+	for (; position != 0; --position)
+	{
+		if (pointer[position - 1] == '\n')
+			break;
+	}
+	pointer += position;
+	char *end = find_character(pointer, '\n');
+	Size linesz = end - pointer;
+	char buf[linesz + 1];
+	copy_memory(buf, pointer, linesz);
+	buf[linesz + 16] = 0;
+	Size offset = parser->location.position - position - 1;
+	const char esc[] = "\e[1;31m";
+	Size escsz = sizeof(esc) - 1;
+	{
+		char *p = buf + offset;
+		move_memory(p + escsz, p, linesz - offset);
+		buf[linesz + escsz] = 0;
+		copy_memory(p, esc, escsz);
+	}
+	{
+		const char esc2[] = "\e[0m";
+		Size esc2sz = sizeof(esc2) - 1;
+		char *p = buf + offset + escsz + 1;
+		move_memory(p + esc2sz, p, linesz - offset);
+		buf[linesz + escsz + esc2sz] = 0;
+		copy_memory(p, esc2, esc2sz);
+	}
+	fprintf(stderr, "\n| %s\n  ", buf);
+
+
+	for (Size i = 0; i < offset; ++i)
+		putc(' ', stderr);
+
+	fprintf(stderr, "\e[1;31m");
+	for (Size i = 0; i < parser->token.size; ++i)
+		putc('^', stderr);
+	fprintf(stderr, "\e[0m\n");
+}
+
 Size get_alignment_addition(Address address, Size alignment)
 {
 	assert(alignment % 2 == 0);
@@ -372,7 +427,7 @@ void print(const char *message, ...)
 	va_end(args);
 }
 
-void err(const char *message, ...)
+void report_error(const char *message, ...)
 {
 	++compilation_errors_count;
 
@@ -384,7 +439,7 @@ void err(const char *message, ...)
 	fprintf(stderr, "\n");
 }
 
-void warn(const char *message, ...)
+void report_warning(const char *message, ...)
 {
 	fprintf(stderr, "warning: ");
 	va_list args;
@@ -458,7 +513,7 @@ bool open_file(Handle *handle, const char *path, bool writable)
 	int fd = open(path, oflags);
 	if (fd == -1)
 	{
-		err("system: Failed to open file: %s", get_system_error_message());
+		report_error("system: Failed to open file: %s", get_system_error_message());
 		return 0;
 	}
 	*handle = fd;
@@ -475,7 +530,7 @@ bool get_file_size(Handle handle, Size *size)
 	struct stat st;
 	if (fstat(handle, &st) == -1)
 	{
-		err("system: Failed to get file size: %s", get_system_error_message());
+		report_error("system: Failed to get file size: %s", get_system_error_message());
 		return 0;
 	}
 	*size = st.st_size;
@@ -488,7 +543,7 @@ bool read_file(Handle handle, void *buffer, Size *size)
 	if (r == -1)
 	{
 		*size = 0;
-		err("system: Failed to read file: %s", get_system_error_message());
+		report_error("system: Failed to read file: %s", get_system_error_message());
 		return 0;
 	}
 	*size = r;
@@ -500,7 +555,7 @@ Size get_full_file_path(const char *path, char *buffer)
 	char pathbuf[MAX_FILE_PATH_SIZE + 1];
 	if (!realpath(path, pathbuf))
 	{
-		err("system: Failed to get full file path: %s", get_system_error_message());
+		report_error("system: Failed to get full file path: %s", get_system_error_message());
 		return 0;
 	}
 	Size length = get_length_of_string(pathbuf);

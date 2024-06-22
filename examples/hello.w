@@ -1,3 +1,3 @@
-_start :: proc() {
+_start ` :: proc() {
 
 };
